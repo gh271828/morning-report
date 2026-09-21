@@ -113,10 +113,7 @@ SIERRA_PASSES = [
     ("89", "Monitor Pass"),
 ]
 
-USER_AGENT = (
-    "MorningReport/1.0 (Death Valley Natural History Association; "
-    "contact: you@example.org)"
-)
+USER_AGENT = "MorningReport/1.0 (+https://github.com/gh271828/morning-report)"
 
 WIDTH = 78          # printed line width
 LABEL_COL = 32      # column where the dot leaders stop and text begins
@@ -487,6 +484,7 @@ class YearToDate:
     calendar_precip: float | None = None
     water_year_precip: float | None = None
     water_year_start: str | None = None
+    missing_days: int = 0        # days in the calendar year with no observation
     note: str | None = None
 
 
@@ -543,7 +541,12 @@ def get_climate(today: date):
                     if ytd.low_f is None or v < ytd.low_f:
                         ytd.low_f, ytd.low_date = v, d
                 v = _num(pc)
-                if v is not None:
+                if v is None:
+                    # A day the station did not report. Counting it silently as
+                    # zero is how a season's total ends up quietly wrong.
+                    if day.year == today.year:
+                        ytd.missing_days += 1
+                else:
                     if day.year == today.year:
                         cal_total += v
                     if day >= wy_start:
@@ -926,9 +929,12 @@ def render_text(rep: Report) -> str:
             temps.append(f"Low: {lo:.0f}\u00b0F ({c_from_f(lo)}\u00b0C) on {ytd['low_date']}")
         L.append(leader("Temperatures", "   ".join(temps) or "n/a", fill="\u2026"))
         year = rep.report_date.split()[-1]
+        gap = ytd.get("missing_days") or 0
         precip = (f"Year {year}: {ytd.get('calendar_precip', 0):.2f} inches   "
                   f"{ytd.get('water_year_start')} through today: "
                   f"{ytd.get('water_year_precip', 0):.2f} inches")
+        if gap:
+            precip += f"   ({gap} day{'s' if gap != 1 else ''} not reported)"
         L.append(leader("Precipitation", precip, fill="\u2026"))
     else:
         L.append(wrap_block("[unavailable]", 2))
