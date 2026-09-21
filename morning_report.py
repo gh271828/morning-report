@@ -113,7 +113,27 @@ SIERRA_PASSES = [
     ("89", "Monitor Pass"),
 ]
 
+# California state highways leading to the park. Caltrans reports each route
+# as a whole, so a closure on 178 in the Kern River canyon would otherwise
+# appear in a Death Valley report; only entries tagged with these counties
+# are kept.
+APPROACH_ROADS = [
+    ("178", "Ridgecrest\u2013Trona; Shoshone\u2013Nevada"),
+    ("127", "Baker\u2013Shoshone\u2013Death Valley Jct"),
+    ("190", "Olancha\u2013Death Valley Jct"),
+    ("136", "Lone Pine\u2013Keeler"),
+]
+APPROACH_COUNTIES = ("INYO", "SAN BERNARDINO")
+
 USER_AGENT = "MorningReport/1.0 (+https://github.com/gh271828/morning-report)"
+
+# Where a reader should go to check something properly. Linked from the top of
+# the page and the PDF.
+OFFICIAL = {
+    "Weather": "https://forecast.weather.gov/MapClick.php?zoneid=CAZ522",
+    "Roads": "https://www.nps.gov/deva/planyourvisit/conditions.htm",
+    "Campgrounds": "https://www.nps.gov/deva/planyourvisit/developed-campgrounds.htm",
+}
 
 # Shared by every renderer so the page, the PDF and the text file say the same
 # thing in the same words.
@@ -215,6 +235,37 @@ def edition_label(built: datetime) -> str:
     if 17 <= h < 21:
         return "Evening edition"
     return "Night edition"
+
+
+def road_status_note(rep) -> str | None:
+    """
+    'NPS last updated road status on September 18, 2026, 2 days ago.'
+
+    States the age of the update without implying the information is stale:
+    between weather events road status rarely changes, so an old update is
+    usually still a correct one.
+    """
+    raw = getattr(rep, "roads_updated", None)
+    if not raw:
+        return None
+    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", raw)
+    if not m:
+        return f"NPS last updated road status {raw}."
+    month, day, year = (int(x) for x in m.groups())
+    try:
+        updated = date(year, month, day)
+    except ValueError:
+        return f"NPS last updated road status {raw}."
+    today = datetime.fromisoformat(rep.generated).date()
+    days = (today - updated).days
+    if days <= 0:
+        age = "earlier today"
+    elif days == 1:
+        age = "yesterday"
+    else:
+        age = f"{days} days ago"
+    when = stamp(datetime(year, month, day), "%B %-d, %Y", "%B %d, %Y")
+    return f"NPS last updated road status on {when}, {age}."
 
 
 def c_from_f(f: float) -> int:
@@ -776,6 +827,72 @@ def get_pass_status(road: str) -> str:
     return body or "no restrictions reported"
 
 
+def caltrans_route_lines(road: str) -> list[str]:
+    """
+    The lines Caltrans reports for one highway, in order: bracketed region
+    headers, restriction lines, and "No traffic restrictions" lines.
+    """
+    soup = BeautifulSoup(fetch(CALTRANS_URL.format(road=road)), "html.parser")
+    for br in soup.find_all("br"):
+        br.replace_with("\n")
+    lines = [clean(l) for l in soup.get_text("\n").split("\n")]
+    heading = re.compile(rf"(SR|US|I)[- ]?{re.escape(road)}", re.I)
+    try:
+        i = next(i for i, l in enumerate(lines) if heading.fullmatch(l))
+    except StopIteration:
+        raise SourceError(f"no section for highway {road}")
+    out = []
+    for l in lines[i + 1:]:
+        if re.fullmatch(r"(SR|US|I)[- ]?\d+", l, re.I) or l.lower().startswith("back to top"):
+            break
+        if l.startswith("Copyright"):
+            break
+        if l:
+            out.append(l)
+    return out
+
+
+_COUNTY_TAG = re.compile(r"\(([A-Za-z][A-Za-z .]*?)\s+CO\.?\)", re.I)
+
+
+def approach_restrictions(road: str, counties=APPROACH_COUNTIES) -> tuple[list[str], bool]:
+    """
+    Restrictions on one route that fall in the given counties.
+
+    Returns (kept, filtered_out): the matching restriction texts, and whether
+    anything was reported elsewhere on the route and left out. A line with no
+    county tag of its own is treated as a continuation of the line before it
+    and shares its fate; a first line with no tag is kept, since dropping an
+    unlabelled closure silently is the worse mistake.
+    """
+    wanted = tuple(c.upper() for c in counties)
+    kept: list[str] = []
+    filtered_out = False
+    prev_keep = None
+    for line in caltrans_route_lines(road):
+        if re.fullmatch(r"\[.*\]", line):          # region header
+            prev_keep = None
+            continue
+        if "no traffic restrictions" in line.lower():
+            prev_keep = None
+            continue
+        tags = [t.upper() for t in _COUNTY_TAG.findall(line)]
+        if tags:
+            keep = any(t.startswith(w) for t in tags for w in wanted)
+            if keep:
+                kept.append(line)
+            else:
+                filtered_out = True
+            prev_keep = keep
+        elif prev_keep is None:
+            kept.append(line)                         # unlabelled: keep it
+            prev_keep = True
+        elif prev_keep and kept:
+            kept[-1] = f"{kept[-1]} {line}"          # continuation
+        # else: continuation of a dropped line, dropped with it
+    return kept, filtered_out
+
+
 def summarize_pass(text: str) -> str:
     low = text.lower()
     if "closed" in low:
@@ -804,6 +921,7 @@ class Report:
     campgrounds: list = field(default_factory=list)
     facilities: list = field(default_factory=list)
     sierra: list = field(default_factory=list)
+    approach: list = field(default_factory=list)
     roads_updated: str | None = None
     raw_sections: dict = field(default_factory=dict)
     errors: list = field(default_factory=list)
@@ -855,6 +973,26 @@ def build_report(*, skip_sierra: bool = False) -> Report:
         rep.raw_sections = cond.raw_sections
     except SourceError as e:
         rep.errors.append(f"park conditions: {short_error(e)}")
+
+    # California approach roads, filtered to Inyo and San Bernardino counties
+    counties = " or ".join(c.title() for c in APPROACH_COUNTIES)
+    for road, name in APPROACH_ROADS:
+        try:
+            kept, filtered_out = approach_restrictions(road)
+            if kept:
+                for n, text in enumerate(kept):
+                    rep.approach.append({"road": f"Hwy {road}" if n == 0 else "",
+                                         "name": name if n == 0 else "",
+                                         "status": text})
+            else:
+                note = (f"No restrictions reported in {counties} counties."
+                        if filtered_out else "No restrictions reported.")
+                rep.approach.append({"road": f"Hwy {road}", "name": name,
+                                     "status": note})
+        except SourceError as e:
+            rep.approach.append({"road": f"Hwy {road}", "name": name,
+                                 "status": "[unavailable]"})
+            rep.errors.append(f"Hwy {road}: {short_error(e)}")
 
     # Sierra passes
     if not skip_sierra:
@@ -964,7 +1102,7 @@ def render_text(rep: Report) -> str:
     # --- Road conditions ----------------------------------------------------
     L.append("Current Road Conditions")
     if rep.roads_updated:
-        L.append(wrap_block(f"(park road status updated {rep.roads_updated})", 2))
+        L.append(wrap_block(road_status_note(rep), 2))
     L.append("")
     if rep.roads_paved or rep.roads_unpaved:
         if rep.roads_paved:
@@ -983,6 +1121,18 @@ def render_text(rep: Report) -> str:
     L.append(wrap_block("For more park road information see the Alerts & Conditions "
                         "page: " + NPS_CONDITIONS_URL, 2))
     L.append("")
+
+    # --- California approach roads ----------------------------------------
+    if rep.approach:
+        L.append("California Approach Roads")
+        for a in rep.approach:
+            if a["road"]:
+                L.append(leader(f"  {a['road']} ({a['name']})", a["status"],
+                                fill="\u2026"))
+            else:
+                # A second restriction on the same route: indent, no leader.
+                L.append(wrap_block(a["status"], LABEL_COL))
+        L.append("")
 
     # --- Sierra passes ------------------------------------------------------
     if rep.sierra:
@@ -1127,7 +1277,7 @@ def render_html(rep: Report) -> str:
 
     parts.append("<h3>Current Road Conditions</h3>")
     if rep.roads_updated:
-        parts.append(f'<p class="muted">Park road status updated {e(rep.roads_updated)}</p>')
+        parts.append(f'<p class="muted">{e(road_status_note(rep))}</p>')
     if rep.roads_paved:
         parts.append("<h4>Paved Roads</h4>")
         parts.append(dl(cond_pairs(rep.roads_paved)))

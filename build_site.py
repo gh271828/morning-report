@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import re
 import os
 import sys
 from datetime import datetime
@@ -34,453 +35,324 @@ except ImportError as e:
 
 
 # ---------------------------------------------------------------------------
-# Design tokens
+# Design: the park's printed sheet, on screen
 #
-# Ground: the alkali flat at Badwater, a cool off-white rather than a warm
-# cream. Ink: near-black with a trace of the Panamints' blue-violet at dusk.
-# Two accents, both semantic rather than decorative -- oxidised iron for
-# closures, a dry sage for what is open.
+# Black bar and heavy rule framing the masthead, bold section heads between
+# rules, rows indented beneath them with dotted leaders, multi-column
+# temperature rows and a two-column road list -- the October 2015 sheet. On a
+# phone the columns and leaders give way to a single stacked list, because a
+# leader needs width to mean anything.
 # ---------------------------------------------------------------------------
-
-CSS = """
-:root {
-  --paper:  #EFEFE9;
-  --ink:    #17181A;
-  --muted:  #6A6C68;
-  --rule:   #C9C9BF;
-  --closed:  #8C3A22;
-  --caution: #8A6316;
-  --open:    #4A6150;
-  --leader: #BDBDB2;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper:  #16171A;
-    --ink:    #E9E8E2;
-    --muted:  #93958E;
-    --rule:   #34363A;
-    --closed:  #D08063;
-    --caution: #C9A250;
-    --open:    #8FAE96;
-    --leader: #3C3E42;
-  }
-}
-
-* { box-sizing: border-box; }
-
-html { -webkit-text-size-adjust: 100%; }
-
-body {
-  margin: 0;
-  padding: 2.5rem 1.25rem 4rem;
-  background: var(--paper);
-  color: var(--ink);
-  font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI",
-               sans-serif;
-  font-size: 16px;
-  line-height: 1.5;
-}
-
-.sheet { max-width: 44rem; margin: 0 auto; }
-
-/* ---- masthead ---------------------------------------------------------- */
-
-header { text-align: center; margin-bottom: 2.25rem; }
-
-h1 {
-  font-family: Newsreader, Georgia, "Times New Roman", serif;
-  font-weight: 500;
-  font-size: clamp(1.75rem, 6vw, 2.6rem);
-  line-height: 1.1;
-  letter-spacing: -0.015em;
-  margin: 0;
-}
-
-.report-date {
-  font-family: Newsreader, Georgia, serif;
-  font-size: clamp(1rem, 3vw, 1.2rem);
-  font-style: italic;
-  color: var(--muted);
-  margin: 0.4rem 0 0;
-}
-
-.provenance a { color: inherit; text-underline-offset: 2px; }
-.provenance a:hover { color: var(--ink); }
-
-.provenance {
-  margin: 1.1rem auto 0;
-  padding-top: 0.9rem;
-  border-top: 1px solid var(--rule);
-  max-width: 30rem;
-  font-size: 0.8125rem;
-  color: var(--muted);
-}
-
-/* ---- lede: the nearest forecast period, set to be read ----------------- */
-
-.lede { margin: 0 0 1.75rem; }
-
-.lede .period {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--muted);
-  margin: 0 0 0.35rem;
-}
-
-.lede p {
-  font-family: Newsreader, Georgia, serif;
-  font-size: clamp(1.15rem, 3.4vw, 1.45rem);
-  line-height: 1.45;
-  margin: 0;
-  text-wrap: pretty;
-}
-
-.sun {
-  margin: 0 0 2.25rem;
-  padding: 0.6rem 0;
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-  font-size: 0.9375rem;
-  display: flex;
-  gap: 1.5rem;
-  flex-wrap: wrap;
-}
-.sun span { color: var(--muted); }
-.sun b { font-weight: 600; color: var(--ink); }
-
-/* ---- sections ---------------------------------------------------------- */
-
-section { margin-bottom: 2rem; }
-
-h2 {
-  font-family: Newsreader, Georgia, serif;
-  font-weight: 500;
-  font-size: 1.25rem;
-  margin: 0 0 0.75rem;
-  padding-bottom: 0.3rem;
-  border-bottom: 1px solid var(--rule);
-}
-
-h3 {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--muted);
-  margin: 1.25rem 0 0.5rem;
-}
-
-.note { color: var(--muted); font-size: 0.875rem; margin: 0 0 0.75rem; }
-
-/* ---- the entry row, with the dot leader from the printed sheet ---------- */
-
-.entry {
-  display: grid;
-  grid-template-columns: minmax(6rem, auto) 1fr minmax(45%, 1fr);
-  align-items: baseline;
-  column-gap: 0.4rem;
-  padding: 0.3rem 0;
-}
-
-.entry + .entry { border-top: 1px solid color-mix(in srgb, var(--rule) 45%, transparent); }
-
-.entry dt { font-weight: 600; font-size: 0.9375rem; }
-
-.entry .fill {
-  border-bottom: 2px dotted var(--leader);
-  transform: translateY(-0.28em);
-  min-width: 1.5rem;
-}
-
-.entry dd { margin: 0; font-size: 0.9375rem; text-wrap: pretty; }
-
-.status { font-weight: 600; }
-.status.closed  { color: var(--closed); }
-.status.caution { color: var(--caution); }
-.status.open    { color: var(--open); }
-
-/* On a narrow screen the leader has nowhere to go, so the row stacks. */
-@media (max-width: 34rem) {
-  .entry { display: block; padding: 0.55rem 0; }
-  .entry .fill { display: none; }
-  .entry dd { margin-top: 0.1rem; }
-}
-
-/* ---- footer ------------------------------------------------------------ */
-
-footer {
-  margin-top: 3rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--rule);
-  font-size: 0.8125rem;
-  color: var(--muted);
-}
-
-footer p { margin: 0 0 0.5rem; }
-
-footer a { color: inherit; text-decoration-color: var(--rule); }
-footer a:hover { text-decoration-color: currentColor; }
-
-.downloads { display: flex; gap: 1.25rem; flex-wrap: wrap; margin-bottom: 1rem; }
-.downloads a {
-  font-size: 0.9375rem;
-  color: var(--ink);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
-}
-
-:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
-
-@media print {
-  body { background: #fff; color: #000; padding: 0; font-size: 10pt; }
-  .downloads, .provenance { border: 0; }
-  .entry .fill { border-bottom-color: #bbb; }
-}
-"""
 
 # How the schedule is described to readers. Deliberately vague: GitHub queues
 # cron jobs and can run them up to an hour late, so naming exact clock times
-# would promise a precision the schedule does not have. The edition time in
-# the masthead is the real build time, which is the part worth being exact
-# about.
+# would promise a precision the schedule does not have. The exact build time
+# is stated in the footer.
 SCHEDULE = "in the morning and the evening"
 
-# Where a reader should go to check something properly.
-OFFICIAL = {
-    "Weather": "https://forecast.weather.gov/MapClick.php?zoneid=CAZ522",
-    "Roads": "https://www.nps.gov/deva/planyourvisit/conditions.htm",
-    "Campgrounds": "https://www.nps.gov/deva/planyourvisit/developed-campgrounds.htm",
+
+CSS = """
+:root {
+  --paper: #ffffff;
+  --ink: #111111;
+  --muted: #5c5c5c;
+  --leader: #8c8c8c;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --paper: #141414; --ink: #ececec; --muted: #a2a2a2; --leader: #666666; }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  padding: 1.5rem 1rem 3rem;
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px/1.42 "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+.sheet { max-width: 57rem; margin: 0 auto; }
+a { color: inherit; text-underline-offset: 2px; }
+
+/* masthead */
+.bar { height: 0.85rem; background: var(--ink); }
+h1 {
+  font-size: clamp(1.7rem, 5.6vw, 2.55rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  margin: 0.55rem 0 0.15rem;
+}
+.edition { font-size: clamp(1.15rem, 3.7vw, 1.6rem); margin: 0; }
+.edition b { font-weight: 700; }
+.prov {
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--muted);
+  margin: 0.4rem 0 0;
+  padding-bottom: 0.6rem;
+  border-bottom: 4px solid var(--ink);
 }
 
+/* sections */
+section { border-top: 2px solid var(--ink); padding: 0.6rem 0 0.75rem; }
+section.first { border-top: 0; }
+h2 { font-size: 1.08rem; margin: 0 0 0.4rem; }
+h2 small { font-weight: 400; font-size: 0.72rem; margin-left: 0.3rem; }
+h3 { font-size: 0.97rem; margin: 1rem 0 0.35rem; }
 
-FONT_LINK = (
-    '<link rel="preconnect" href="https://fonts.googleapis.com">'
-    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
-    '<link href="https://fonts.googleapis.com/css2?'
-    'family=IBM+Plex+Sans:wght@400;600&'
-    'family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400'
-    '&display=swap" rel="stylesheet">'
-)
+/* a label, a dotted leader, a value */
+.row {
+  display: grid;
+  grid-template-columns: 13rem 1fr;
+  padding-left: 1.1rem;
+  margin: 0.12rem 0;
+  font-size: 0.88rem;
+  align-items: start;
+}
+/* Labels and leaders sit on the value's first line, as on the sheet. */
+.lab { display: flex; align-items: baseline; min-width: 0; padding-right: 0.35rem; }
+.lab .t { flex: 0 1 auto; }
+.lab::after, .seg::after {
+  content: "";
+  flex: 1 0 1rem;
+  border-bottom: 2px dotted var(--leader);
+  margin: 0 0 0 0.3em;
+  align-self: baseline;
+  height: 0.3em;
+}
+.row.cont .lab::after, .lab.empty::after, .seg.last::after { display: none; }
+.val b { font-weight: 700; }
+.val .muted { color: var(--muted); }
 
+/* temperature rows: up to three values, each led into the next */
+.segs { display: grid; grid-template-columns: 14rem 15.5rem auto; }
+.seg { display: flex; align-items: baseline; padding-right: 0.35rem; }
+.seg .t { white-space: nowrap; }
 
-# ---------------------------------------------------------------------------
-# Page assembly
-# ---------------------------------------------------------------------------
+/* Too narrow for three value columns: stack them. */
+@media (max-width: 60rem) {
+  .segs { grid-template-columns: 1fr; }
+  .seg::after { display: none; }
+}
+
+.note { padding-left: 1.1rem; margin: 0.12rem 0; font-size: 0.88rem; }
+.note.i { font-style: italic; }
+.small { padding-left: 14.1rem; font-size: 0.76rem; font-style: italic; color: var(--muted); margin: 0.1rem 0; }
+
+/* two-column lists: roads, campgrounds, facilities */
+.twocol { columns: 2; column-gap: 1.8rem; padding-left: 1.1rem; margin-top: 0.5rem; }
+.twocol .row { grid-template-columns: 9.5rem 1fr; padding-left: 0; margin: 0 0 0.35rem; break-inside: avoid; }
+
+/* footer */
+footer { border-top: 3px solid var(--ink); padding-top: 0.6rem; font-size: 0.82rem; }
+footer p { margin: 0 0 0.4rem; }
+footer .i { font-style: italic; }
+.dl a { margin-right: 1.3rem; font-size: 0.9rem; }
+
+/* phones: one column, no leaders, labels above their values */
+@media (max-width: 42rem) {
+  .row, .twocol .row { grid-template-columns: 1fr; padding-left: 0.4rem; margin: 0.35rem 0; }
+  .lab::after, .seg::after { display: none; }
+  .lab .t { font-weight: 600; }
+  .segs { grid-template-columns: 1fr; }
+  .twocol { columns: 1; padding-left: 0; }
+  .note { padding-left: 0.4rem; }
+  .small { padding-left: 0.4rem; }
+}
+
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+@media print { body { padding: 0; font-size: 11px; } .dl { display: none; } }
+"""
+
 
 def e(s):
     return html.escape(str(s if s is not None else ""))
 
 
-def status_class(status):
-    """CAUTION is not a synonym for open, and must not be coloured like one."""
-    s = (status or "").upper()
-    if "CLOSED" in s:
-        return "closed"
-    if "CAUTION" in s or "PARTIALLY" in s or "DELAY" in s:
-        return "caution"
-    return "open"
-
-
-def entry(label, value, status=None):
-    """One label/value row with a dot leader between them."""
+def status_html(status, detail=""):
+    """'CLOSED' + 'Due to flooding' -> '<b>CLOSED.</b> Due to flooding'."""
+    detail = (detail or "").strip()
+    if detail:
+        detail = detail[0].upper() + detail[1:]
     if status:
-        cls = status_class(status)
-        value = f'<span class="status {cls}">{e(status)}.</span> {e(value)}'.rstrip()
-    else:
-        value = e(value)
-    return (f'<div class="entry"><dt>{e(label)}</dt>'
-            f'<span class="fill" aria-hidden="true"></span>'
-            f'<dd>{value}</dd></div>')
+        return f"<b>{e(status)}.</b> {e(detail)}".rstrip()
+    return e(detail or "See the park website.")
 
 
-def items_block(items):
-    out = []
-    for it in items:
-        detail = (it.get("detail") or "").strip()
-        if detail:
-            detail = detail[0].upper() + detail[1:]
-        # With a status and nothing more to say, the status is the whole story.
-        fallback = "" if it.get("status") else "See the park website."
-        out.append(entry(it["name"], detail or fallback, it.get("status")))
-    return "".join(out)
+def row(label, value_html, cls=""):
+    lab = (f'<span class="lab"><span class="t">{e(label)}</span></span>' if label
+           else '<span class="lab empty"></span>')
+    return f'<div class="row {cls}">{lab}<div class="val">{value_html}</div></div>'
+
+
+def multi(label, segs):
+    cells = "".join(
+        f'<span class="seg{" last" if i == len(segs) - 1 else ""}">'
+        f'<span class="t">{e(seg)}</span></span>'
+        for i, seg in enumerate(segs))
+    lab = (f'<span class="lab"><span class="t">{e(label)}</span></span>' if label
+           else '<span class="lab empty"></span>')
+    return f'<div class="row">{lab}<div class="segs">{cells}</div></div>'
+
+
+def twocol(pairs):
+    return '<div class="twocol">' + "".join(row(l, v) for l, v in pairs) + "</div>"
+
+
+def _road_pair(it):
+    """Mirror the sheet: a long parenthetical moves from the name into the value."""
+    name, detail = it["name"], it.get("detail") or ""
+    m = re.match(r"^(.*?)\s*\((.+)\)\s*$", name)
+    if m and len(name) > 26:
+        name = m.group(1).strip()
+        lead = m.group(2).strip()
+        detail = f"{lead[0].upper() + lead[1:]}. {detail}".strip()
+    return name, status_html(it.get("status"), detail)
 
 
 def build_html(rep, *, pdf_name, txt_name):
-    parts = []
-
-    # --- masthead --------------------------------------------------------
+    P = []
     built = datetime.fromisoformat(rep.generated)
     edition = mr.edition_label(built)
-    links = ", ".join(
-        f'<a href="{e(url)}">{e(name)}</a>' for name, url in OFFICIAL.items())
-    # "A, B and C" rather than a trailing comma before the last link.
-    if links.count("</a>, ") >= 1:
-        head, _, tail = links.rpartition(", ")
-        links = f"{head} and {tail}"
-    parts.append(
-        '<header>'
+
+    # --- masthead ----------------------------------------------------------
+    names = list(mr.OFFICIAL)
+    links = [f'<a href="{e(mr.OFFICIAL[n])}">{e(n)}</a>' for n in names]
+    linked = ", ".join(links[:-1]) + f" and {links[-1]}" if len(links) > 1 else links[0]
+    P.append(
+        '<header><div class="bar"></div>'
         '<h1>Death Valley National Park</h1>'
-        f'<p class="report-date">{e(rep.report_date)}</p>'
-        f'<p class="provenance">{e(edition)}. '
-        'Not produced by or affiliated with the National Park Service or Death '
-        'Valley National Park. Check official sources before you travel: '
-        f'{links}.</p>'
-        '</header>'
-    )
+        f'<p class="edition"><b>{e(edition.title())}:</b> '
+        f'{e(rep.report_date.replace(",", "", 1))}</p>'
+        f'<p class="prov">{e(mr.DISCLAIMER[:-1])}: {linked}.</p>'
+        '</header>')
 
-    # --- lede: whichever period is closest to now ------------------------
-    lede = None
-    for slot in ("Today", "Tonight", "Tomorrow"):
-        if rep.forecast.get(slot):
-            lede = (slot, rep.forecast[slot]["text"])
-            break
-    if lede:
-        parts.append(f'<div class="lede"><p class="period">{e(lede[0])}</p>'
-                     f'<p>{e(lede[1])}</p></div>')
+    # --- weather forecast --------------------------------------------------
+    rows = [row(slot, e(rep.forecast[slot]["text"]))
+            for slot in ("Today", "Tonight", "Tomorrow", "Tomorrow night", "Extended")
+            if rep.forecast.get(slot)]
+    if not rows:
+        rows = ['<p class="note">The forecast did not come through on this build.</p>']
+    rows.append(multi("", [f"Sunset today: {rep.sunset_today}",
+                           f"Sunrise tomorrow: {rep.sunrise_tomorrow}"]))
+    P.append('<section class="first"><h2>Weather Forecast</h2>' + "".join(rows) + "</section>")
 
-    parts.append(
-        '<p class="sun">'
-        f'<span>Sunset today <b>{e(rep.sunset_today)}</b></span>'
-        f'<span>Sunrise tomorrow <b>{e(rep.sunrise_tomorrow)}</b></span>'
-        '</p>'
-    )
-
-    # --- remaining forecast periods --------------------------------------
-    rest = [(s, rep.forecast[s]["text"])
-            for s in ("Today", "Tonight", "Tomorrow", "Tomorrow night", "Extended")
-            if rep.forecast.get(s) and (not lede or s != lede[0])]
-    if rest:
-        parts.append('<section><h2>Forecast</h2>'
-                     + "".join(entry(s, t) for s, t in rest) + '</section>')
-    elif not lede:
-        parts.append('<section><h2>Forecast</h2>'
-                     '<p class="note">The forecast did not come through on this '
-                     'build.</p></section>')
-
-    # --- conditions ------------------------------------------------------
-    cur = rep.current
+    # --- temperatures, last 24 hours ---------------------------------------
     rows = []
-    if cur and cur.get("temp_f") is not None:
-        bits = [f"{cur['temp_f']:.0f}&deg;F ({mr.c_from_f(cur['temp_f'])}&deg;C)"]
-        if cur.get("wind"):
-            bits.append(f"wind {e(cur['wind'])}")
-        if cur.get("humidity"):
-            bits.append(f"humidity {e(cur['humidity'])}")
-        line = ", ".join(bits)
-        if cur.get("updated"):
-            line += f" (as of {e(cur['updated'])})"
-        rows.append(f'<div class="entry"><dt>Right now</dt>'
-                    f'<span class="fill" aria-hidden="true"></span>'
-                    f'<dd>{line}</dd></div>')
-
     for d in rep.daily_climate:
         if d.get("note"):
-            rows.append(entry(d["label"], f"[{d['note']}]"))
+            rows.append(row(d["label"], f'<span class="muted">[{e(d["note"])}]</span>'))
             continue
         hi, lo = d.get("high_f"), d.get("low_f")
-        hi_s = (f"{hi:.0f}&deg;F ({mr.c_from_f(hi)}&deg;C)"
-                if hi is not None else "n/a")
-        lo_s = (f"{lo:.0f}&deg;F ({mr.c_from_f(lo)}&deg;C)"
-                if lo is not None else "n/a")
-        rows.append(f'<div class="entry"><dt>{e(d["label"])}</dt>'
-                    f'<span class="fill" aria-hidden="true"></span>'
-                    f'<dd>High {hi_s} &nbsp; Low {lo_s} &nbsp; '
-                    f'Precip {e(d.get("precip") or "n/a")}</dd></div>')
+        rows.append(multi(d["label"], [
+            f"High: {hi:.0f}\u00b0F ({mr.c_from_f(hi)}\u00b0C)" if hi is not None else "High: n/a",
+            f"Low: {lo:.0f}\u00b0F ({mr.c_from_f(lo)}\u00b0C)" if lo is not None else "Low: n/a",
+            f"Precipitation: {d.get('precip') or 'n/a'}"]))
+    cur = rep.current
+    if cur and cur.get("temp_f") is not None:
+        bits = [f"{cur['temp_f']:.0f}\u00b0F ({mr.c_from_f(cur['temp_f'])}\u00b0C)"]
+        if cur.get("wind"):
+            bits.append(f"wind {cur['wind']}")
+        if cur.get("humidity"):
+            bits.append(f"humidity {cur['humidity']}")
+        line = ", ".join(bits) + (f" (as of {cur['updated']})" if cur.get("updated") else "")
+        rows.append(row("Now at Furnace Creek", e(line)))
     if rows:
-        parts.append('<section><h2>Temperature and precipitation</h2>'
-                     '<p class="note">Last 24 hours.</p>'
-                     + "".join(rows) + '</section>')
+        P.append('<section><h2>Temperatures &amp; Precipitation <small>(last 24 hours)</small></h2>'
+                 + "".join(rows) + "</section>")
 
-    # --- year to date ----------------------------------------------------
+    # --- year to date ------------------------------------------------------
     ytd = rep.year_to_date or {}
     if ytd and not ytd.get("note"):
         hi, lo = ytd.get("high_f"), ytd.get("low_f")
-        t = []
+        segs = []
         if hi is not None:
-            t.append(f"High {hi:.0f}&deg;F ({mr.c_from_f(hi)}&deg;C) "
-                     f"on {e(mrp.pretty_date(ytd['high_date']))}")
+            segs.append(f"High: {hi:.0f}\u00b0F ({mr.c_from_f(hi)}\u00b0C) on {mrp.short_date(ytd['high_date'])}")
         if lo is not None:
-            t.append(f"Low {lo:.0f}&deg;F ({mr.c_from_f(lo)}&deg;C) "
-                     f"on {e(mrp.pretty_date(ytd['low_date']))}")
-        precip = (f"Calendar year {ytd.get('calendar_precip', 0):.2f} in "
-                  f"&nbsp; Since {e(mrp.pretty_date(ytd.get('water_year_start')))} "
-                  f"{ytd.get('water_year_precip', 0):.2f} in")
+            segs.append(f"Low: {lo:.0f}\u00b0F ({mr.c_from_f(lo)}\u00b0C) on {mrp.short_date(ytd['low_date'])}")
+        year = rep.report_date.split()[-1]
+        rows = [multi("Temperatures", segs or ["n/a"]),
+                multi("Precipitation", [
+                    f"Year {year}: {ytd.get('calendar_precip', 0):.2f} inches",
+                    f"{mrp.short_date(ytd.get('water_year_start'))} through today: "
+                    f"{ytd.get('water_year_precip', 0):.2f} inches"])]
         gap = ytd.get("missing_days") or 0
         if gap:
-            precip += (f' <span class="note">&mdash; {gap} '
-                       f'day{"s" if gap != 1 else ""} not reported, so the '
-                       f'total runs low</span>')
-        parts.append(
-            f'<section><h2>Year to date at {e(ytd.get("label", "Furnace Creek"))}</h2>'
-            f'<div class="entry"><dt>Temperature</dt>'
-            f'<span class="fill" aria-hidden="true"></span>'
-            f'<dd>{" &nbsp; ".join(t) or "n/a"}</dd></div>'
-            f'<div class="entry"><dt>Precipitation</dt>'
-            f'<span class="fill" aria-hidden="true"></span>'
-            f'<dd>{precip}</dd></div></section>')
+            rows.append(f'<p class="small">{gap} day{"s" if gap != 1 else ""} not reported '
+                        'this year, so the totals may run low.</p>')
+        P.append(f'<section><h2>Year to Date <small>({e(ytd.get("label", "Furnace Creek"))})</small></h2>'
+                 + "".join(rows) + "</section>")
 
-    # --- roads -----------------------------------------------------------
-    road_parts = []
-    if rep.roads_updated:
-        road_parts.append(f'<p class="note">Park road status updated '
-                          f'{e(rep.roads_updated)}.</p>')
-    if rep.roads_paved:
-        road_parts.append('<h3>Paved</h3>' + items_block(rep.roads_paved))
-    if rep.roads_unpaved:
-        road_parts.append('<h3>Unpaved and backcountry</h3>'
-                          + items_block(rep.roads_unpaved))
-    if not (rep.roads_paved or rep.roads_unpaved):
-        road_parts.append('<p class="note">Road status did not come through on '
-                          'this build.</p>')
-    parts.append('<section><h2>Roads</h2>' + "".join(road_parts) + '</section>')
+    # --- roads -------------------------------------------------------------
+    R = ['<h2>Current Road Conditions</h2>']
+    note = mr.road_status_note(rep)
+    if note:
+        R.append(f'<p class="note">{e(note)}</p>')
+    R.append(f'<p class="note i">For more park road information visit the '
+             f'<a href="{e(mr.OFFICIAL["Roads"])}">NPS Alerts &amp; Conditions page</a>.</p>')
+    roads = rep.roads_paved + rep.roads_unpaved
+    if roads:
+        R.append(twocol(sorted((_road_pair(it) for it in roads), key=lambda t: t[0].lower())))
+    else:
+        R.append('<p class="note">Road status did not come through on this build.</p>')
+
+    if rep.approach:
+        R.append("<h3>Roads OUTSIDE Death Valley</h3>")
+        for a in rep.approach:
+            if a["road"]:
+                R.append(row(f"CA {a['road']}",
+                             f'{e(a["status"])} <span class="muted">\u2014 {e(a["name"])}</span>'))
+            else:
+                R.append(row("", e(a["status"]), "cont"))
 
     if rep.sierra:
-        parts.append('<section><h2>Sierra Nevada passes</h2>'
-                     + "".join(entry(f"{s['road']} \u2014 {s['name']}",
-                                     s["status"]) for s in rep.sierra)
-                     + '</section>')
+        R.append("<h3>Sierra Nevada Roads</h3>")
+        for sp in rep.sierra:
+            R.append(row(f"CA {sp['road']}",
+                         f'{e(sp["status"])} <span class="muted">\u2014 {e(sp["name"])}</span>'))
+    P.append("<section>" + "".join(R) + "</section>")
 
-    parts.append('<section><h2>Campgrounds</h2>'
-                 + (items_block(rep.campgrounds) if rep.campgrounds
-                    else '<p class="note">Campground status did not come '
-                         'through on this build.</p>')
-                 + '</section>')
-
+    # --- campgrounds and facilities ---------------------------------------
+    if rep.campgrounds:
+        P.append('<section><h2>Campgrounds</h2>'
+                 + twocol([(mrp.short_label(it["name"]), status_html(it.get("status"), it.get("detail")))
+                           for it in rep.campgrounds])
+                 + "</section>")
+    else:
+        P.append('<section><h2>Campgrounds</h2><p class="note">Campground status did not '
+                 'come through on this build.</p></section>')
     if rep.facilities:
-        parts.append('<section><h2>Facilities</h2>'
-                     + items_block(rep.facilities) + '</section>')
+        P.append('<section><h2>Facilities</h2>'
+                 + twocol([(it["name"], status_html(it.get("status"), it.get("detail")))
+                           for it in rep.facilities])
+                 + "</section>")
 
-    # --- footer ----------------------------------------------------------
-    stamp = mr.stamp(built, "%A, %B %-d, %Y at %-I:%M %p",
-                     "%A, %B %d, %Y at %I:%M %p")
+    # --- footer ------------------------------------------------------------
+    stamp = mr.stamp(built, "%A, %B %-d, %Y at %-I:%M %p", "%A, %B %d, %Y at %I:%M %p")
     stamp = stamp.replace("AM", "am").replace("PM", "pm")
-    parts.append(
+    P.append(
         '<footer>'
-        f'<p class="downloads"><a href="{e(pdf_name)}">Printable PDF</a>'
+        f'<p class="i">Built twice daily, {e(SCHEDULE)}. Most recent build: {e(stamp)} Pacific. '
+        'Conditions are subject to change without notice.</p>'
+        f'<p class="dl"><a href="{e(pdf_name)}">Printable PDF</a>'
         f'<a href="{e(txt_name)}">Plain text</a></p>'
-        f'<p>Built twice daily, {e(SCHEDULE)}. '
-        f'Most recent build: {e(stamp)} Pacific.</p>'
         '<p>Sources: '
-        '<a href="https://www.nps.gov/deva/planyourvisit/conditions.htm">'
-        'NPS Alerts &amp; Conditions</a>, '
-        '<a href="https://forecast.weather.gov/MapClick.php?zoneid=CAZ522">'
-        'NWS zone CAZ522</a>, '
+        '<a href="https://www.nps.gov/deva/planyourvisit/conditions.htm">NPS Alerts &amp; Conditions</a>, '
+        '<a href="https://forecast.weather.gov/MapClick.php?zoneid=CAZ522">NWS zone CAZ522</a>, '
         '<a href="https://www.rcc-acis.org/">RCC-ACIS</a>, '
         '<a href="https://roads.dot.ca.gov/">Caltrans</a>.</p>'
-        '</footer>'
-    )
+        '</footer>')
 
-    body = "".join(parts)
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f'<title>Death Valley National Park &middot; {e(rep.report_date)}</title>'
-        '<meta name="description" content="An unofficial daily reconstruction '
-        'of the Death Valley National Park Morning Report: forecast, road '
-        'conditions and campground status.">'
+        '<meta name="description" content="An unofficial daily reconstruction of the '
+        'Death Valley National Park morning report: forecast, road conditions and '
+        'campground status.">'
         '<meta name="color-scheme" content="light dark">'
-        f'{FONT_LINK}<style>{CSS}</style></head>'
-        f'<body><main class="sheet">{body}</main></body></html>'
-    )
+        f'<style>{CSS}</style></head>'
+        f'<body><main class="sheet">{"".join(P)}</main></body></html>')
 
 
 # ---------------------------------------------------------------------------
