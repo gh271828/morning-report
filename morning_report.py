@@ -1080,7 +1080,9 @@ def render_html(rep: Report) -> str:
         return out
 
     parts = [f"<h1>Death Valley National Park</h1>",
-             f'<h2 class="date">Morning Report: {e(rep.report_date)}</h2>']
+             f'<h2 class="date">{e(rep.report_date)}</h2>',
+             f'<p class="muted">{e(edition_label(datetime.fromisoformat(rep.generated)))}. '
+             f'{e(DISCLAIMER)}</p>']
 
     parts.append("<h3>Weather Forecast</h3>")
     fc = [(slot, e(rep.forecast[slot]["text"]))
@@ -1153,7 +1155,7 @@ def render_html(rep: Report) -> str:
                  "Caltrans.</footer>")
 
     return ("<!doctype html><html><head><meta charset='utf-8'>"
-            f"<title>Morning Report &mdash; {e(rep.report_date)}</title>"
+            f"<title>Death Valley National Park &mdash; {e(rep.report_date)}</title>"
             f"<style>{HTML_CSS}</style></head><body>"
             + "".join(parts) + "</body></html>")
 
