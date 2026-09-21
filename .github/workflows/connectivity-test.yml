@@ -1,0 +1,37 @@
+name: Connectivity test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests beautifulsoup4
+
+      - name: Can we reach each source?
+        run: |
+          python - <<'EOF'
+          import requests
+          UA = {"User-Agent": "MorningReport/1.0 (test; gh271828)"}
+          urls = {
+            "NPS conditions": "https://www.nps.gov/deva/planyourvisit/conditions.htm",
+            "NWS API":        "https://api.weather.gov/zones/forecast/CAZ522/forecast",
+            "NWS zone page":  "https://forecast.weather.gov/MapClick.php?zoneid=CAZ522",
+            "ACIS":           "https://data.rcc-acis.org/StnData?sid=USC00042319&sdate=2026-09-01&edate=2026-09-10&elems=pcpn",
+            "Caltrans":       "https://roads.dot.ca.gov/?roadnumber=120",
+          }
+          for name, url in urls.items():
+              try:
+                  r = requests.get(url, headers=UA, timeout=30)
+                  print(f"{name:16} HTTP {r.status_code}  {len(r.content):>7} bytes")
+              except Exception as e:
+                  print(f"{name:16} FAILED  {type(e).__name__}: {e}")
+          EOF
+
+      - name: Full report
+        run: python morning_report.py
