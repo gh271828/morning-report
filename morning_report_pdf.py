@@ -118,8 +118,10 @@ def build_blocks(rep, include=None):
     inc = include if include is not None else set(DROPPABLE)
     B = []
     B.append(("title", "Death Valley National Park"))
-    B.append(("subtitle", f"Morning Report: {rep.report_date}"))
-    B.append(("gap", 5))
+    B.append(("subtitle", rep.report_date))
+    edition = mr.edition_label(datetime.fromisoformat(rep.generated))
+    B.append(("provenance", f"{edition}. {mr.DISCLAIMER}"))
+    B.append(("gap", 7))
 
     B.append(("heading", "Weather Forecast"))
     got = False
@@ -306,6 +308,19 @@ def layout(blocks, pt):
                 c.drawString(MARGIN_X, yy, t)))
             y += pt * 0.2
 
+        elif kind == "provenance":
+            txt = payload
+            size = pt - 1.5
+            y += pt * 0.25
+            for line in wrap(txt, BODY, size, full_w * 0.86):
+                y += size * 1.2
+                op(lambda c, yy, t=line, sz=size: (
+                    c.setFillGray(0.4),
+                    c.setFont(BODY, sz),
+                    c.drawCentredString(PAGE_W / 2, yy, t),
+                    c.setFillGray(0)))
+            y += pt * 0.35
+
         elif kind == "centre":
             y += lead
             txt = payload
@@ -381,8 +396,8 @@ def render(rep, path, *, verbose=True):
 
     pt, ops = chosen
     c = rl_canvas.Canvas(path, pagesize=letter)
-    c.setTitle(f"Morning Report - {rep.report_date}")
-    c.setAuthor("Death Valley National Park (unofficial reconstruction)")
+    c.setTitle(f"Death Valley National Park - {rep.report_date}")
+    c.setAuthor("Unofficial reconstruction")
 
     top = PAGE_H - MARGIN_TOP
     for y_off, fn in ops:
@@ -420,7 +435,6 @@ def draw_footer(c, rep, pt):
                  "Weather and road conditions subject to change without notice. "
                  "Sources: NPS, NWS (zone CAZ522), RCC-ACIS, Caltrans.")
     c.drawString(MARGIN_X, y, f"Printed {stamp} Pacific time.")
-    c.drawRightString(PAGE_W - MARGIN_X, y, "Unofficial reconstruction")
     c.setFillGray(0)
 
 

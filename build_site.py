@@ -266,18 +266,6 @@ FONT_LINK = (
 # Page assembly
 # ---------------------------------------------------------------------------
 
-def edition_label(built):
-    """Which edition this build is, by the clock it was actually run at."""
-    h = built.hour
-    if 5 <= h < 12:
-        return "Morning edition"
-    if 12 <= h < 17:
-        return "Afternoon edition"
-    if 17 <= h < 21:
-        return "Evening edition"
-    return "Night edition"
-
-
 def e(s):
     return html.escape(str(s if s is not None else ""))
 
@@ -321,7 +309,7 @@ def build_html(rep, *, pdf_name, txt_name):
 
     # --- masthead --------------------------------------------------------
     built = datetime.fromisoformat(rep.generated)
-    edition = edition_label(built)
+    edition = mr.edition_label(built)
     links = ", ".join(
         f'<a href="{e(url)}">{e(name)}</a>' for name, url in OFFICIAL.items())
     # "A, B and C" rather than a trailing comma before the last link.

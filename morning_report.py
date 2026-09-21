@@ -115,6 +115,12 @@ SIERRA_PASSES = [
 
 USER_AGENT = "MorningReport/1.0 (+https://github.com/gh271828/morning-report)"
 
+# Shared by every renderer so the page, the PDF and the text file say the same
+# thing in the same words.
+DISCLAIMER = ("Not produced by or affiliated with the National Park Service or "
+              "Death Valley National Park. Check official sources before you "
+              "travel.")
+
 WIDTH = 78          # printed line width
 LABEL_COL = 32      # column where the dot leaders stop and text begins
 
@@ -197,6 +203,18 @@ def wrap_block(text: str, indent: int = 0, width: int = WIDTH) -> str:
     return textwrap.fill(text, width=width - indent,
                          initial_indent=" " * indent,
                          subsequent_indent=" " * indent)
+
+
+def edition_label(built: datetime) -> str:
+    """Which edition a build is, by the clock it was actually run at."""
+    h = built.hour
+    if 5 <= h < 12:
+        return "Morning edition"
+    if 12 <= h < 17:
+        return "Afternoon edition"
+    if 17 <= h < 21:
+        return "Evening edition"
+    return "Night edition"
 
 
 def c_from_f(f: float) -> int:
@@ -861,7 +879,10 @@ def build_report(*, skip_sierra: bool = False) -> Report:
 def render_text(rep: Report) -> str:
     L: list[str] = []
     L.append("Death Valley National Park".center(WIDTH).rstrip())
-    L.append(f"Morning Report: {rep.report_date}".center(WIDTH).rstrip())
+    L.append(rep.report_date.center(WIDTH).rstrip())
+    L.append("")
+    edition = edition_label(datetime.fromisoformat(rep.generated))
+    L.append(wrap_block(f"{edition}. {DISCLAIMER}"))
     L.append("")
 
     # --- Weather forecast ---------------------------------------------------
