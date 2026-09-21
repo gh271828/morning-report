@@ -30,6 +30,17 @@ jobs:
 
       - run: pip install requests beautifulsoup4 reportlab
 
+      - name: Fingerprint the code
+        run: |
+          echo "--- commit ---"
+          git log -1 --oneline
+          echo "--- every file in the checkout ---"
+          find . -name '*.py' -not -path './.git/*' -exec ls -l {} \;
+          echo "--- checksums ---"
+          md5sum *.py
+          echo "--- which module Python actually imports ---"
+          python -c "import morning_report as m; print(m.__file__); print('has DISCLAIMER:', hasattr(m, 'DISCLAIMER'))"
+
       - name: Build the report
         run: python build_site.py --out site
 
