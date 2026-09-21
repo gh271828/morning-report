@@ -1,0 +1,56 @@
+name: Publish Morning Report
+
+on:
+  schedule:
+    # GitHub cron is UTC and does not follow daylight saving.
+    # 15:00 UTC = 8am PDT (7am PST in winter)
+    # 01:00 UTC = 6pm PDT (5pm PST in winter)
+    - cron: '0 15 * * *'
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install requests beautifulsoup4 reportlab
+
+      - name: Build the report
+        run: python build_site.py --out site
+
+      - name: Show what the sources did
+        if: always()
+        run: |
+          echo "--- built files ---"
+          ls -la site/
+          echo "--- text output ---"
+          cat site/morning-report.txt
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
